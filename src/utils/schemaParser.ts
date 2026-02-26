@@ -101,11 +101,18 @@ function detectFormDefinition(root: Record<string, unknown>): DetectedForm | nul
 function parseFormDefinition(formName: string, def: Record<string, unknown>): ParsedSchema {
   const formTitle = str(def.title) ?? formName;
   const formDescription = str(def.description) ?? '';
-  const requiredSet = new Set(strArr(def.required));
-  const hiddenSet = new Set(strArr(def.hidden));
-  const uneditableSet = new Set(strArr(def.uneditable));
 
-  const properties = def.properties as Record<string, unknown> | undefined;
+  // For array-type definitions, pull fields from items
+  let source = def;
+  if (def.type === 'array' && def.items && typeof def.items === 'object') {
+    source = def.items as Record<string, unknown>;
+  }
+
+  const requiredSet = new Set(strArr(source.required));
+  const hiddenSet = new Set(strArr(source.hidden));
+  const uneditableSet = new Set(strArr(source.uneditable));
+
+  const properties = source.properties as Record<string, unknown> | undefined;
   const fields: FieldConfig[] = [];
   if (properties) {
     for (const [widgetName, prop] of Object.entries(properties)) {
@@ -119,7 +126,7 @@ function parseFormDefinition(formName: string, def: Record<string, unknown>): Pa
     }
   }
 
-  const switchOperators = parseSwitchOperators(def.switch);
+  const switchOperators = parseSwitchOperators(source.switch ?? def.switch);
 
   return { formName, formTitle, formDescription, fields, switchOperators };
 }
