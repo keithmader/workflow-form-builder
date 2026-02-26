@@ -268,23 +268,26 @@ export const useFormBuilderStore = create<FormBuilderState>((set, get) => ({
     if (!result) return false;
     const state = get();
 
-    // Extract form metadata from the JSON top-level
-    let formName = state.formName;
-    let formTitle = state.formTitle;
-    let formDescription = state.formDescription;
-    try {
-      const parsed = JSON.parse(json);
-      if (parsed.title && typeof parsed.title === 'string') {
-        formTitle = parsed.title;
-        // Derive formName from title (camelCase, no spaces)
-        formName = parsed.title.replace(/[^a-zA-Z0-9]+(.)/g, (_: string, c: string) => c.toUpperCase())
-          .replace(/[^a-zA-Z0-9]/g, '');
+    // Use parser-provided metadata, fall back to current state
+    let formName = result.formName ?? state.formName;
+    let formTitle = result.formTitle ?? state.formTitle;
+    let formDescription = result.formDescription ?? state.formDescription;
+
+    // If parser didn't provide metadata, try extracting from JSON top-level
+    if (!result.formName && !result.formTitle) {
+      try {
+        const parsed = JSON.parse(json);
+        if (parsed.title && typeof parsed.title === 'string') {
+          formTitle = parsed.title;
+          formName = parsed.title.replace(/[^a-zA-Z0-9]+(.)/g, (_: string, c: string) => c.toUpperCase())
+            .replace(/[^a-zA-Z0-9]/g, '');
+        }
+        if (parsed.description && typeof parsed.description === 'string') {
+          formDescription = parsed.description;
+        }
+      } catch {
+        // JSON already validated by caller, just skip metadata extraction
       }
-      if (parsed.description && typeof parsed.description === 'string') {
-        formDescription = parsed.description;
-      }
-    } catch {
-      // JSON already validated by caller, just skip metadata extraction
     }
 
     set({
@@ -353,22 +356,10 @@ export const useFormBuilderStore = create<FormBuilderState>((set, get) => ({
       if (parsed) {
         fields = parsed.fields;
         switchOperators = parsed.switchOperators;
-      }
-      // Also extract form metadata from rawSchema
-      try {
-        const json = JSON.parse(savedForm.rawSchema);
-        if (json.title && typeof json.title === 'string') {
-          formTitle = json.title;
-          if (!formName || formName === 'NewForm') {
-            formName = json.title.replace(/[^a-zA-Z0-9]+(.)/g, (_: string, c: string) => c.toUpperCase())
-              .replace(/[^a-zA-Z0-9]/g, '');
-          }
-        }
-        if (json.description && typeof json.description === 'string') {
-          formDescription = json.description;
-        }
-      } catch {
-        // skip metadata extraction
+        // Use parser-provided metadata when available
+        if (parsed.formTitle) formTitle = parsed.formTitle;
+        if (parsed.formName && (!formName || formName === 'NewForm')) formName = parsed.formName;
+        if (parsed.formDescription) formDescription = parsed.formDescription;
       }
     }
 
