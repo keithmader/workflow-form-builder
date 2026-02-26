@@ -341,13 +341,42 @@ export const useFormBuilderStore = create<FormBuilderState>((set, get) => ({
   },
 
   loadForm: (savedForm) => {
-    const fields = JSON.parse(JSON.stringify(savedForm.fields));
-    const switchOperators = JSON.parse(JSON.stringify(savedForm.switchOperators));
+    let fields = JSON.parse(JSON.stringify(savedForm.fields));
+    let switchOperators = JSON.parse(JSON.stringify(savedForm.switchOperators));
+    let formName = savedForm.formName;
+    let formTitle = savedForm.formTitle;
+    let formDescription = savedForm.formDescription;
+
+    // If fields are empty but rawSchema exists, try to parse fields from the JSON
+    if ((!fields || fields.length === 0) && savedForm.rawSchema) {
+      const parsed = parseSchema(savedForm.rawSchema);
+      if (parsed) {
+        fields = parsed.fields;
+        switchOperators = parsed.switchOperators;
+      }
+      // Also extract form metadata from rawSchema
+      try {
+        const json = JSON.parse(savedForm.rawSchema);
+        if (json.title && typeof json.title === 'string') {
+          formTitle = json.title;
+          if (!formName || formName === 'NewForm') {
+            formName = json.title.replace(/[^a-zA-Z0-9]+(.)/g, (_: string, c: string) => c.toUpperCase())
+              .replace(/[^a-zA-Z0-9]/g, '');
+          }
+        }
+        if (json.description && typeof json.description === 'string') {
+          formDescription = json.description;
+        }
+      } catch {
+        // skip metadata extraction
+      }
+    }
+
     const state = get();
     set({
-      formName: savedForm.formName,
-      formTitle: savedForm.formTitle,
-      formDescription: savedForm.formDescription,
+      formName,
+      formTitle,
+      formDescription,
       fields,
       switchOperators,
       rawSchema: savedForm.rawSchema ?? null,

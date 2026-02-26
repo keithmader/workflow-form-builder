@@ -22,6 +22,9 @@ export function FormCanvas() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        <div className="px-3 pt-3 pb-1">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Form Definition</h3>
+        </div>
         {fields.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             <div className="text-center">

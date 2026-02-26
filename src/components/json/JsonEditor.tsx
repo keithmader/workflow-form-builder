@@ -1,17 +1,23 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Editor from '@monaco-editor/react';
+import { Pin, PinOff } from 'lucide-react';
 import { useFormBuilderStore } from '@/stores/formBuilderStore';
-import { isBuilderReady } from '@/lib/builderBridge';
+// import { isBuilderReady } from '@/lib/builderBridge';
 
-export function JsonEditor() {
-  const { fields, switchOperators, generateSchema, importSchema, generatedSchema, rawSchema, formLoadCounter } = useFormBuilderStore();
+interface JsonEditorProps {
+  pinned?: boolean;
+  onTogglePin?: () => void;
+}
+
+export function JsonEditor({ pinned, onTogglePin }: JsonEditorProps) {
+  const { importSchema, rawSchema, formLoadCounter } = useFormBuilderStore();
   const [localJson, setLocalJson] = useState<string>('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const justAppliedRef = useRef(false);
   const prevLoadCounterRef = useRef(formLoadCounter);
 
-  // Detect form load/switch — always reset and show the saved JSON
+  // Detect form load/switch — show the saved rawSchema (never auto-generate)
   useEffect(() => {
     if (prevLoadCounterRef.current !== formLoadCounter) {
       prevLoadCounterRef.current = formLoadCounter;
@@ -19,7 +25,6 @@ export function JsonEditor() {
       justAppliedRef.current = false;
       setParseError(null);
 
-      // Use persisted raw schema if available
       const currentRaw = useFormBuilderStore.getState().rawSchema;
       if (currentRaw) {
         try {
@@ -27,39 +32,26 @@ export function JsonEditor() {
         } catch {
           setLocalJson(currentRaw);
         }
-        return;
-      }
-
-      // Otherwise generate from fields
-      if (isBuilderReady()) {
-        const schema = generateSchema();
-        if (schema) setLocalJson(schema);
+      } else {
+        setLocalJson('');
       }
       return;
     }
-  }, [formLoadCounter, generateSchema]);
+  }, [formLoadCounter]);
 
-  // Auto-generate schema when fields change from canvas edits
+  // Show saved rawSchema from store (kept in sync on save)
   useEffect(() => {
-    if (justAppliedRef.current) {
-      justAppliedRef.current = false;
-      return;
-    }
-    if (!isEditing && isBuilderReady()) {
-      const schema = generateSchema();
-      if (schema) {
-        setLocalJson(schema);
-        setParseError(null);
+    if (!isEditing) {
+      const currentRaw = useFormBuilderStore.getState().rawSchema;
+      if (currentRaw) {
+        try {
+          setLocalJson(JSON.stringify(JSON.parse(currentRaw), null, 2));
+        } catch {
+          setLocalJson(currentRaw);
+        }
       }
     }
-  }, [fields, switchOperators]);
-
-  // Sync from store when generated externally (e.g. Export)
-  useEffect(() => {
-    if (generatedSchema && !isEditing) {
-      setLocalJson(generatedSchema);
-    }
-  }, [generatedSchema]);
+  }, [rawSchema]);
 
   const handleChange = useCallback((value: string | undefined) => {
     if (!value) return;
@@ -93,10 +85,16 @@ export function JsonEditor() {
   const handleRefresh = () => {
     justAppliedRef.current = false;
     setIsEditing(false);
-    const schema = generateSchema();
-    if (schema) {
-      setLocalJson(schema);
-      setParseError(null);
+    setParseError(null);
+    const currentRaw = useFormBuilderStore.getState().rawSchema;
+    if (currentRaw) {
+      try {
+        setLocalJson(JSON.stringify(JSON.parse(currentRaw), null, 2));
+      } catch {
+        setLocalJson(currentRaw);
+      }
+    } else {
+      setLocalJson('');
     }
   };
 
@@ -104,7 +102,7 @@ export function JsonEditor() {
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
         <span className="text-xs font-medium text-muted-foreground">JSON Schema</span>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
           {isEditing && (
             <>
               <button
@@ -130,6 +128,15 @@ export function JsonEditor() {
           >
             Copy
           </button>
+          {onTogglePin && (
+            <button
+              className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+              onClick={onTogglePin}
+              title={pinned ? 'Unpin panel (hide)' : 'Pin panel'}
+            >
+              {pinned ? <Pin size={12} /> : <PinOff size={12} />}
+            </button>
+          )}
         </div>
       </div>
       {parseError && (

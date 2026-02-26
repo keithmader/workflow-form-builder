@@ -3,7 +3,7 @@ import { useFormBuilderStore } from '@/stores/formBuilderStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { isBuilderReady } from '@/lib/builderBridge';
 import {
-  Plus, Download, Upload, Undo2, Redo2, FileJson, /* Eye, */ Save,
+  Plus, Download, Upload, Undo2, Redo2, FileJson, /* Eye, */ Save, PanelRight,
 } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { UnsavedChangesDialog } from '@/components/explorer/ExplorerDialogs';
@@ -11,11 +11,13 @@ import { UnsavedChangesDialog } from '@/components/explorer/ExplorerDialogs';
 interface ToolbarProps {
   // onTogglePreview: () => void;
   onToggleJson: () => void;
+  onToggleProps: () => void;
   // showPreview: boolean;
   showJson: boolean;
+  showProps: boolean;
 }
 
-export function Toolbar({ /* onTogglePreview, */ onToggleJson, /* showPreview, */ showJson }: ToolbarProps) {
+export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /* showPreview, */ showJson, showProps }: ToolbarProps) {
   const {
     formName, newForm, undo, redo,
     historyIndex, history, generateSchema, importSchema,
@@ -204,6 +206,14 @@ export function Toolbar({ /* onTogglePreview, */ onToggleJson, /* showPreview, *
       {importError && (
         <span className="text-destructive text-xs mr-2">{importError}</span>
       )}
+
+      <button
+        className={`${btnClass} ${showProps ? 'bg-accent' : ''}`}
+        onClick={onToggleProps}
+        title="Toggle Properties / Conditionals"
+      >
+        <PanelRight size={16} /> Properties
+      </button>
 
       <button
         className={`${btnClass} ${showJson ? 'bg-accent' : ''}`}
