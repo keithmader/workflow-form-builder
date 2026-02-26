@@ -3,19 +3,19 @@ import { useFormBuilderStore } from '@/stores/formBuilderStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { isBuilderReady } from '@/lib/builderBridge';
 import {
-  Plus, Download, Upload, Undo2, Redo2, FileJson, Eye, Save,
+  Plus, Download, Upload, Undo2, Redo2, FileJson, /* Eye, */ Save,
 } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { UnsavedChangesDialog } from '@/components/explorer/ExplorerDialogs';
 
 interface ToolbarProps {
-  onTogglePreview: () => void;
+  // onTogglePreview: () => void;
   onToggleJson: () => void;
-  showPreview: boolean;
+  // showPreview: boolean;
   showJson: boolean;
 }
 
-export function Toolbar({ onTogglePreview, onToggleJson, showPreview, showJson }: ToolbarProps) {
+export function Toolbar({ /* onTogglePreview, */ onToggleJson, /* showPreview, */ showJson }: ToolbarProps) {
   const {
     formName, newForm, undo, redo,
     historyIndex, history, generateSchema, importSchema,
@@ -213,6 +213,7 @@ export function Toolbar({ onTogglePreview, onToggleJson, showPreview, showJson }
         <FileJson size={16} /> JSON
       </button>
 
+      {/* Preview button — commented out
       <button
         className={`${btnClass} ${showPreview ? 'bg-accent' : ''}`}
         onClick={onTogglePreview}
@@ -220,6 +221,7 @@ export function Toolbar({ onTogglePreview, onToggleJson, showPreview, showJson }
       >
         <Eye size={16} /> Preview
       </button>
+      */}
 
       {!builderReady && (
         <span className="text-xs text-destructive ml-2">Builder not loaded</span>

@@ -78,7 +78,9 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
   };
 
   const handleClick = () => {
-    if (!isForm) {
+    if (isForm) {
+      if (onOpen && node.formRef) onOpen(node.formRef.formId);
+    } else {
       toggleNode(node.id);
     }
   };
@@ -124,7 +126,7 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
       ref={setRef}
       className={[
         'flex items-center gap-1 px-1 py-1 text-sm transition-colors group',
-        isForm ? 'cursor-default' : 'cursor-pointer',
+        'cursor-pointer',
         isActive ? 'bg-primary/10 text-primary border-l-2 border-primary' : 'border-l-2 border-transparent',
         isOver ? 'bg-accent/50' : '',
         isDragging ? 'opacity-40' : '',

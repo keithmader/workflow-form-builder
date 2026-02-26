@@ -6,22 +6,22 @@ import { FormCanvas } from '@/components/canvas/FormCanvas';
 import { PropertyPanel } from '@/components/properties/PropertyPanel';
 import { JsonEditor } from '@/components/json/JsonEditor';
 import { SwitchEditor } from '@/components/conditionals/SwitchEditor';
-import { PreviewPanel } from '@/components/preview/PreviewPanel';
+// import { PreviewPanel } from '@/components/preview/PreviewPanel';
 import { ProjectExplorer } from '@/components/explorer/ProjectExplorer';
 
 type RightPanel = 'properties' | 'conditionals';
 
 export function AppShell() {
   const [showJson, setShowJson] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  // const [showPreview, setShowPreview] = useState(false);
   const [rightPanel, setRightPanel] = useState<RightPanel>('properties');
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
       <Toolbar
-        onTogglePreview={() => setShowPreview(!showPreview)}
+        // onTogglePreview={() => setShowPreview(!showPreview)}
         onToggleJson={() => setShowJson(!showJson)}
-        showPreview={showPreview}
+        // showPreview={showPreview}
         showJson={showJson}
       />
 
@@ -87,12 +87,13 @@ export function AppShell() {
           </div>
         )}
 
-        {/* Preview (toggleable) */}
+        {/* Preview (toggleable) — commented out
         {showPreview && (
           <div className="w-96 border-l border-border flex-shrink-0 overflow-hidden">
             <PreviewPanel />
           </div>
         )}
+        */}
       </div>
     </div>
   );
