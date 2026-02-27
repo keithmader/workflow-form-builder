@@ -23,7 +23,7 @@ export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: To
   } = useFormBuilderStore();
 
   const {
-    activeFormId, updateSavedForm, rootIds, nodes,
+    activeFormId, activeFolderId, updateSavedForm, rootIds, nodes,
     saveForm, createFolder, findFormNode, getAncestorPath,
   } = useProjectStore();
 
@@ -45,10 +45,12 @@ export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: To
         snapshot.rawSchema,
       );
     } else {
-      // No active form — save into first root folder or create one
-      let parentId: string | null = null;
-      for (const id of rootIds) {
-        if (nodes[id]?.kind === 'folder') { parentId = id; break; }
+      // No active form — save into active folder, first root folder, or create one
+      let parentId: string | null = activeFolderId;
+      if (!parentId || !nodes[parentId]) {
+        for (const id of rootIds) {
+          if (nodes[id]?.kind === 'folder') { parentId = id; break; }
+        }
       }
       if (!parentId) {
         parentId = createFolder(null, 'My Project');
@@ -64,7 +66,7 @@ export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: To
       );
     }
     useFormBuilderStore.setState({ isDirty: false });
-  }, [activeFormId, getFormSnapshot, updateSavedForm, rootIds, nodes, saveForm, createFolder]);
+  }, [activeFormId, activeFolderId, getFormSnapshot, updateSavedForm, rootIds, nodes, saveForm, createFolder]);
 
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 

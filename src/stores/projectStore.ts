@@ -13,6 +13,7 @@ interface ProjectState {
   rootIds: string[];
   savedForms: Record<string, SavedForm>;
   activeFormId: string | null;
+  activeFolderId: string | null;
   expandedNodes: Set<string>;
 
   // Persistence
@@ -49,6 +50,7 @@ interface ProjectState {
   duplicateForm: (formId: string) => string | null;
   openForm: (formId: string) => SavedForm | null;
   setActiveFormId: (formId: string | null) => void;
+  setActiveFolderId: (folderId: string | null) => void;
 
   // Helpers
   getAncestorPath: (nodeId: string) => string[];
@@ -214,6 +216,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   rootIds: [],
   savedForms: {},
   activeFormId: null,
+  activeFolderId: null,
   expandedNodes: new Set<string>(),
 
   loadFromStorage: () => {
@@ -530,11 +533,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const state = get();
     const form = state.savedForms[formId];
     if (!form) return null;
-    set({ activeFormId: formId });
+    // Track which folder this form lives in
+    let folderId: string | null = null;
+    for (const node of Object.values(state.nodes)) {
+      if (node.kind === 'form' && node.formId === formId && node.parentId) {
+        folderId = node.parentId;
+        break;
+      }
+    }
+    set({ activeFormId: formId, activeFolderId: folderId });
     return form;
   },
 
   setActiveFormId: (formId) => set({ activeFormId: formId }),
+  setActiveFolderId: (folderId) => set({ activeFolderId: folderId }),
 
   // ── Helpers ───────────────────────────────────────────────────────
 

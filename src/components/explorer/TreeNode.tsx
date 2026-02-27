@@ -16,7 +16,7 @@ interface TreeNodeProps {
 }
 
 export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }: TreeNodeProps) {
-  const { expandedNodes, toggleNode } = useProjectStore();
+  const { expandedNodes, toggleNode, setActiveFolderId } = useProjectStore();
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
   const renameRef = useRef<HTMLInputElement>(null);
@@ -68,6 +68,7 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
     if (isForm) {
       if (onOpen && node.formId) onOpen(node.formId);
     } else {
+      setActiveFolderId(node.id);
       toggleNode(node.id);
     }
   };

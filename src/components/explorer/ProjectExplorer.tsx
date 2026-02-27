@@ -29,7 +29,7 @@ export function ProjectExplorer() {
     nodes, rootIds, activeFormId, expandedNodes,
     createFolder, createFormNode, renameNode, deleteNode,
     duplicateForm, saveForm, updateSavedForm, openForm, expandNode,
-    moveNode,
+    moveNode, setActiveFolderId,
   } = useProjectStore();
 
   const { isDirty, loadForm, getFormSnapshot } = useFormBuilderStore();
