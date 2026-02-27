@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import {
-  ChevronRight, ChevronDown, Building2, Folder, FolderOpen, Tag, FileText,
+  ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   MoreHorizontal, GripVertical,
 } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
@@ -22,45 +22,34 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
   const renameRef = useRef<HTMLInputElement>(null);
 
   const isExpanded = expandedNodes.has(node.id);
-  const isForm = node.type === 'form';
-  const isDropTarget = !isForm;
+  const isForm = node.kind === 'form';
+  const isFolder = node.kind === 'folder';
 
-  // Draggable for forms — listeners will be attached to drag handle only
-  const dragItem: DragItem | null = isForm && node.formRef ? {
-    type: 'form',
-    formRef: node.formRef,
-    sourceProjectId: node.projectId,
-    sourceChildId: node.childId,
-    sourceCategoryId: node.categoryId,
-  } : null;
+  // Both folders and forms are draggable
+  const dragItem: DragItem = {
+    nodeId: node.id,
+    kind: node.kind,
+    name: node.name,
+  };
 
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: `drag-${node.id}`,
-    data: dragItem ?? undefined,
-    disabled: !isForm,
+    data: dragItem,
   });
 
-  // Droppable for containers
-  const dropTarget: DropTarget | null = isDropTarget ? {
-    type: node.type as 'project' | 'child' | 'category',
-    projectId: node.projectId,
-    childId: node.childId,
-    categoryId: node.categoryId,
-  } : null;
+  // Only folders are drop targets
+  const dropTarget: DropTarget | null = isFolder ? { nodeId: node.id } : null;
 
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `drop-${node.id}`,
     data: dropTarget ?? undefined,
-    disabled: isForm,
+    disabled: !isFolder,
   });
 
-  // Combine refs
+  // Combine refs — forms get drag ref, folders get both
   const setRef = (el: HTMLElement | null) => {
-    if (isForm) {
-      setDragRef(el);
-    } else {
-      setDropRef(el);
-    }
+    setDragRef(el);
+    if (isFolder) setDropRef(el);
   };
 
   useEffect(() => {
@@ -71,15 +60,13 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
   }, [isRenaming]);
 
   const handleDoubleClick = () => {
-    if (!isForm) {
-      setRenameValue(node.name);
-      setIsRenaming(true);
-    }
+    setRenameValue(node.name);
+    setIsRenaming(true);
   };
 
   const handleClick = () => {
     if (isForm) {
-      if (onOpen && node.formRef) onOpen(node.formRef.formId);
+      if (onOpen && node.formId) onOpen(node.formId);
     } else {
       toggleNode(node.id);
     }
@@ -89,20 +76,7 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
     setIsRenaming(false);
     const trimmed = renameValue.trim();
     if (!trimmed || trimmed === node.name) return;
-
-    const store = useProjectStore.getState();
-    switch (node.type) {
-      case 'project':
-        store.renameProject(node.projectId, trimmed);
-        break;
-      case 'child':
-        if (node.childId) store.renameChildProject(node.projectId, node.childId, trimmed);
-        break;
-      case 'category':
-        if (node.childId && node.categoryId)
-          store.renameCategory(node.projectId, node.childId, node.categoryId, trimmed);
-        break;
-    }
+    useProjectStore.getState().renameNode(node.id, trimmed);
   };
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
@@ -110,15 +84,7 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
     if (e.key === 'Escape') setIsRenaming(false);
   };
 
-  const Icon = (() => {
-    switch (node.type) {
-      case 'project': return Building2;
-      case 'child': return isExpanded ? FolderOpen : Folder;
-      case 'category': return Tag;
-      case 'form': return FileText;
-    }
-  })();
-
+  const Icon = isForm ? FileText : (isExpanded ? FolderOpen : Folder);
   const indent = node.depth * 16 + 4;
 
   return (
@@ -137,7 +103,7 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
       onDoubleClick={handleDoubleClick}
       onContextMenu={(e) => onContextMenu(e, node)}
     >
-      {/* Drag handle for forms */}
+      {/* Drag handle / chevron */}
       {isForm ? (
         <span
           className="w-4 h-4 flex items-center justify-center flex-shrink-0 cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100"
@@ -147,7 +113,11 @@ export function TreeNode({ node, isActive, onContextMenu, onOpen, onMenuClick }:
           <GripVertical size={12} />
         </span>
       ) : (
-        <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+        <span
+          className="w-4 h-4 flex items-center justify-center flex-shrink-0 cursor-grab"
+          {...attributes}
+          {...listeners}
+        >
           {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
       )}

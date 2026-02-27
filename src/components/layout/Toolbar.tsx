@@ -3,28 +3,29 @@ import { useFormBuilderStore } from '@/stores/formBuilderStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { isBuilderReady } from '@/lib/builderBridge';
 import {
-  Plus, Download, Upload, Undo2, Redo2, FileJson, /* Eye, */ Save, PanelRight,
+  Plus, Download, Upload, Undo2, Redo2, FileJson, Save, PanelRight,
 } from 'lucide-react';
 import { useState, useRef } from 'react';
 import { UnsavedChangesDialog } from '@/components/explorer/ExplorerDialogs';
 
 interface ToolbarProps {
-  // onTogglePreview: () => void;
   onToggleJson: () => void;
   onToggleProps: () => void;
-  // showPreview: boolean;
   showJson: boolean;
   showProps: boolean;
 }
 
-export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /* showPreview, */ showJson, showProps }: ToolbarProps) {
+export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: ToolbarProps) {
   const {
     formName, newForm, undo, redo,
     historyIndex, history, generateSchema, importSchema,
     isDirty, getFormSnapshot,
   } = useFormBuilderStore();
 
-  const { activeFormId, updateSavedForm, projects, saveForm, createProject } = useProjectStore();
+  const {
+    activeFormId, updateSavedForm, rootIds, nodes,
+    saveForm, createFolder, findFormNode, getAncestorPath,
+  } = useProjectStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -37,7 +38,6 @@ export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /*
     const snapshot = getFormSnapshot();
 
     if (activeFormId) {
-      // Update existing saved form
       updateSavedForm(
         activeFormId,
         snapshot.formName, snapshot.formTitle, snapshot.formDescription,
@@ -45,25 +45,26 @@ export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /*
         snapshot.rawSchema,
       );
     } else {
-      // No active form yet — save into the first project, or create one
-      let projectId = projects[0]?.id;
-      if (!projectId) {
-        projectId = createProject('My Project');
+      // No active form — save into first root folder or create one
+      let parentId: string | null = null;
+      for (const id of rootIds) {
+        if (nodes[id]?.kind === 'folder') { parentId = id; break; }
+      }
+      if (!parentId) {
+        parentId = createFolder(null, 'My Project');
       }
       saveForm(
-        projectId,
+        parentId,
         snapshot.formName || 'NewForm',
         snapshot.formTitle || 'New Form',
         snapshot.formDescription || '',
         snapshot.fields,
         snapshot.switchOperators,
-        undefined,
-        undefined,
         snapshot.rawSchema,
       );
     }
     useFormBuilderStore.setState({ isDirty: false });
-  }, [activeFormId, getFormSnapshot, updateSavedForm, projects, saveForm, createProject]);
+  }, [activeFormId, getFormSnapshot, updateSavedForm, rootIds, nodes, saveForm, createFolder]);
 
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
@@ -95,31 +96,15 @@ export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /*
     return () => window.removeEventListener('keydown', handler);
   }, [handleSave]);
 
-  // Build breadcrumb for active form
+  // Build breadcrumb using getAncestorPath
   const breadcrumb = (() => {
     if (!activeFormId) return null;
-    const parts: string[] = [];
-    for (const project of projects) {
-      if (project.uncategorizedForms.some(f => f.formId === activeFormId)) {
-        parts.push(project.name);
-        break;
-      }
-      for (const child of project.children) {
-        if (child.uncategorizedForms.some(f => f.formId === activeFormId)) {
-          parts.push(project.name, child.name);
-          break;
-        }
-        for (const cat of child.categories) {
-          if (cat.formRefs.some(f => f.formId === activeFormId)) {
-            parts.push(project.name, child.name, cat.name);
-            break;
-          }
-        }
-        if (parts.length) break;
-      }
-      if (parts.length) break;
-    }
-    return parts.length > 0 ? parts : null;
+    const formNode = findFormNode(activeFormId);
+    if (!formNode) return null;
+    // Get ancestor path (includes the form node itself) — we want only folders
+    if (!formNode.parentId) return null;
+    const path = getAncestorPath(formNode.parentId);
+    return path.length > 0 ? path : null;
   })();
 
   const handleExport = () => {
@@ -222,16 +207,6 @@ export function Toolbar({ /* onTogglePreview, */ onToggleJson, onToggleProps, /*
       >
         <FileJson size={16} /> JSON
       </button>
-
-      {/* Preview button — commented out
-      <button
-        className={`${btnClass} ${showPreview ? 'bg-accent' : ''}`}
-        onClick={onTogglePreview}
-        title="Toggle Preview"
-      >
-        <Eye size={16} /> Preview
-      </button>
-      */}
 
       {!builderReady && (
         <span className="text-xs text-destructive ml-2">Builder not loaded</span>

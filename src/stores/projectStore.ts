@@ -1,16 +1,16 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import type {
-  Project, ChildProject, Category, FormReference, SavedForm,
-  DragItem, DropTarget,
-} from '@/types/project';
+import type { ExplorerNode, SavedForm, DragItem, DropTarget } from '@/types/project';
 import type { FieldConfig, ConditionalOperatorConfig } from '@/types/schema';
 
 const STORAGE_KEY = 'workflow-form-builder-projects';
 const FORMS_STORAGE_KEY = 'workflow-form-builder-saved-forms';
 
+// ── State shape ───────────────────────────────────────────────────────
+
 interface ProjectState {
-  projects: Project[];
+  nodes: Record<string, ExplorerNode>;
+  rootIds: string[];
   savedForms: Record<string, SavedForm>;
   activeFormId: string | null;
   expandedNodes: Set<string>;
@@ -19,31 +19,21 @@ interface ProjectState {
   loadFromStorage: () => void;
   saveToStorage: () => void;
 
-  // Project CRUD
-  createProject: (name: string) => string;
-  renameProject: (projectId: string, name: string) => void;
-  deleteProject: (projectId: string) => void;
-
-  // Child project CRUD
-  createChildProject: (parentId: string, name: string) => string;
-  renameChildProject: (parentId: string, childId: string, name: string) => void;
-  deleteChildProject: (parentId: string, childId: string) => void;
-
-  // Category CRUD
-  createCategory: (projectId: string, childId: string, name: string) => string;
-  renameCategory: (projectId: string, childId: string, categoryId: string, name: string) => void;
-  deleteCategory: (projectId: string, childId: string, categoryId: string) => void;
+  // Generic CRUD
+  createFolder: (parentId: string | null, name: string) => string;
+  createFormNode: (parentId: string | null, name: string, formId: string) => string;
+  renameNode: (nodeId: string, name: string) => void;
+  deleteNode: (nodeId: string) => void;
+  moveNode: (dragItem: DragItem, dropTarget: DropTarget) => void;
 
   // Form management
   saveForm: (
-    projectId: string,
+    parentId: string | null,
     formName: string,
     formTitle: string,
     formDescription: string,
     fields: FieldConfig[],
     switchOperators: ConditionalOperatorConfig[],
-    childId?: string,
-    categoryId?: string,
     rawSchema?: string | null,
   ) => string;
   updateSavedForm: (
@@ -60,16 +50,16 @@ interface ProjectState {
   openForm: (formId: string) => SavedForm | null;
   setActiveFormId: (formId: string | null) => void;
 
-  // Rename form reference
-  renameForm: (formId: string, newName: string) => void;
-
-  // Drag and drop
-  moveForm: (dragItem: DragItem, dropTarget: DropTarget) => void;
+  // Helpers
+  getAncestorPath: (nodeId: string) => string[];
+  findFormNode: (formId: string) => ExplorerNode | null;
 
   // UI state
   toggleNode: (nodeId: string) => void;
   expandNode: (nodeId: string) => void;
 }
+
+// ── Debounced save ────────────────────────────────────────────────────
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -80,42 +70,148 @@ function debouncedSave(state: ProjectState) {
   }, 500);
 }
 
-// Helper to remove a form ref from anywhere in a project
-function removeFormRefFromProject(project: Project, formId: string): Project {
-  return {
-    ...project,
-    uncategorizedForms: project.uncategorizedForms.filter(f => f.formId !== formId),
-    children: project.children.map(child => ({
-      ...child,
-      uncategorizedForms: child.uncategorizedForms.filter(f => f.formId !== formId),
-      categories: child.categories.map(cat => ({
-        ...cat,
-        formRefs: cat.formRefs.filter(f => f.formId !== formId),
-      })),
-    })),
-  };
+// ── Helpers ───────────────────────────────────────────────────────────
+
+/** Collect all descendant node IDs (inclusive) */
+function collectSubtree(nodes: Record<string, ExplorerNode>, nodeId: string): string[] {
+  const result: string[] = [nodeId];
+  const node = nodes[nodeId];
+  if (!node) return result;
+  for (const childId of node.childIds) {
+    result.push(...collectSubtree(nodes, childId));
+  }
+  return result;
 }
 
-// Helper to update form ref name everywhere
-function updateFormRefName(project: Project, formId: string, newName: string): Project {
-  const updateRef = (ref: FormReference) =>
-    ref.formId === formId ? { ...ref, name: newName } : ref;
-  return {
-    ...project,
-    uncategorizedForms: project.uncategorizedForms.map(updateRef),
-    children: project.children.map(child => ({
-      ...child,
-      uncategorizedForms: child.uncategorizedForms.map(updateRef),
-      categories: child.categories.map(cat => ({
-        ...cat,
-        formRefs: cat.formRefs.map(updateRef),
-      })),
-    })),
-  };
+/** Check if `candidateAncestor` is an ancestor of `nodeId` */
+function isAncestor(nodes: Record<string, ExplorerNode>, candidateAncestor: string, nodeId: string): boolean {
+  let current = nodes[nodeId];
+  while (current) {
+    if (current.parentId === candidateAncestor) return true;
+    if (!current.parentId) return false;
+    current = nodes[current.parentId];
+  }
+  return false;
 }
+
+// ── Migration from old format ─────────────────────────────────────────
+
+interface OldFormReference { id: string; formId: string; name: string; updatedAt: number; }
+interface OldCategory { id: string; name: string; formRefs: OldFormReference[]; }
+interface OldChildProject { id: string; name: string; parentId: string; categories: OldCategory[]; uncategorizedForms: OldFormReference[]; }
+interface OldProject { id: string; name: string; children: OldChildProject[]; uncategorizedForms: OldFormReference[]; }
+
+function migrateOldFormat(oldProjects: OldProject[]): { nodes: Record<string, ExplorerNode>; rootIds: string[] } {
+  const nodes: Record<string, ExplorerNode> = {};
+  const rootIds: string[] = [];
+
+  for (const project of oldProjects) {
+    const projectNode: ExplorerNode = {
+      id: project.id,
+      kind: 'folder',
+      name: project.name,
+      parentId: null,
+      childIds: [],
+      formId: null,
+      updatedAt: Date.now(),
+    };
+    rootIds.push(project.id);
+
+    // Project-level uncategorized forms
+    for (const ref of project.uncategorizedForms) {
+      const formNode: ExplorerNode = {
+        id: ref.id,
+        kind: 'form',
+        name: ref.name,
+        parentId: project.id,
+        childIds: [],
+        formId: ref.formId,
+        updatedAt: ref.updatedAt,
+      };
+      nodes[formNode.id] = formNode;
+      projectNode.childIds.push(formNode.id);
+    }
+
+    // Children (folders)
+    for (const child of project.children) {
+      const childNode: ExplorerNode = {
+        id: child.id,
+        kind: 'folder',
+        name: child.name,
+        parentId: project.id,
+        childIds: [],
+        formId: null,
+        updatedAt: Date.now(),
+      };
+      projectNode.childIds.push(child.id);
+
+      // Child uncategorized forms
+      for (const ref of child.uncategorizedForms) {
+        const formNode: ExplorerNode = {
+          id: ref.id,
+          kind: 'form',
+          name: ref.name,
+          parentId: child.id,
+          childIds: [],
+          formId: ref.formId,
+          updatedAt: ref.updatedAt,
+        };
+        nodes[formNode.id] = formNode;
+        childNode.childIds.push(formNode.id);
+      }
+
+      // Categories become folders
+      for (const cat of child.categories) {
+        const catNode: ExplorerNode = {
+          id: cat.id,
+          kind: 'folder',
+          name: cat.name,
+          parentId: child.id,
+          childIds: [],
+          formId: null,
+          updatedAt: Date.now(),
+        };
+        childNode.childIds.push(cat.id);
+
+        for (const ref of cat.formRefs) {
+          const formNode: ExplorerNode = {
+            id: ref.id,
+            kind: 'form',
+            name: ref.name,
+            parentId: cat.id,
+            childIds: [],
+            formId: ref.formId,
+            updatedAt: ref.updatedAt,
+          };
+          nodes[formNode.id] = formNode;
+          catNode.childIds.push(formNode.id);
+        }
+
+        nodes[catNode.id] = catNode;
+      }
+
+      nodes[childNode.id] = childNode;
+    }
+
+    nodes[projectNode.id] = projectNode;
+  }
+
+  return { nodes, rootIds };
+}
+
+function isOldFormat(data: unknown): data is OldProject[] {
+  return Array.isArray(data) && data.length > 0 && 'children' in data[0];
+}
+
+function isNewFormat(data: unknown): data is { nodes: Record<string, ExplorerNode>; rootIds: string[] } {
+  return !!data && typeof data === 'object' && 'nodes' in data && 'rootIds' in data;
+}
+
+// ── Store ─────────────────────────────────────────────────────────────
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
-  projects: [],
+  nodes: {},
+  rootIds: [],
   savedForms: {},
   activeFormId: null,
   expandedNodes: new Set<string>(),
@@ -124,206 +220,191 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const projectsJson = localStorage.getItem(STORAGE_KEY);
       const formsJson = localStorage.getItem(FORMS_STORAGE_KEY);
-      const projects = projectsJson ? JSON.parse(projectsJson) : [];
       const savedForms = formsJson ? JSON.parse(formsJson) : {};
-      set({ projects, savedForms });
+
+      if (projectsJson) {
+        const parsed = JSON.parse(projectsJson);
+        if (isNewFormat(parsed)) {
+          set({ nodes: parsed.nodes, rootIds: parsed.rootIds, savedForms });
+        } else if (isOldFormat(parsed)) {
+          const { nodes, rootIds } = migrateOldFormat(parsed);
+          set({ nodes, rootIds, savedForms });
+          // Persist migrated format immediately
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, rootIds }));
+        } else {
+          set({ nodes: {}, rootIds: [], savedForms });
+        }
+      } else {
+        set({ nodes: {}, rootIds: [], savedForms });
+      }
     } catch {
-      // Corrupted data, start fresh
-      set({ projects: [], savedForms: {} });
+      set({ nodes: {}, rootIds: [], savedForms: {} });
     }
   },
 
   saveToStorage: () => {
-    const { projects, savedForms } = get();
+    const { nodes, rootIds, savedForms } = get();
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, rootIds }));
       localStorage.setItem(FORMS_STORAGE_KEY, JSON.stringify(savedForms));
     } catch {
       // localStorage full or unavailable
     }
   },
 
-  createProject: (name) => {
+  // ── Generic CRUD ──────────────────────────────────────────────────
+
+  createFolder: (parentId, name) => {
     const id = uuidv4();
-    const project: Project = { id, name, children: [], uncategorizedForms: [] };
+    const node: ExplorerNode = {
+      id, kind: 'folder', name, parentId,
+      childIds: [], formId: null, updatedAt: Date.now(),
+    };
+
     set(state => {
-      const newState = { projects: [...state.projects, project] };
-      debouncedSave({ ...state, ...newState } as ProjectState);
-      return newState;
+      const nodes = { ...state.nodes, [id]: node };
+      let rootIds = state.rootIds;
+
+      if (parentId && nodes[parentId]) {
+        nodes[parentId] = { ...nodes[parentId], childIds: [...nodes[parentId].childIds, id] };
+      } else if (!parentId) {
+        rootIds = [...rootIds, id];
+      }
+
+      debouncedSave({ ...state, nodes, rootIds } as ProjectState);
+      return { nodes, rootIds };
     });
     return id;
   },
 
-  renameProject: (projectId, name) => {
-    set(state => {
-      const projects = state.projects.map(p =>
-        p.id === projectId ? { ...p, name } : p
-      );
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
-    });
-  },
-
-  deleteProject: (projectId) => {
-    set(state => {
-      const project = state.projects.find(p => p.id === projectId);
-      if (!project) return state;
-
-      // Collect all form IDs to delete
-      const formIds = new Set<string>();
-      project.uncategorizedForms.forEach(f => formIds.add(f.formId));
-      project.children.forEach(child => {
-        child.uncategorizedForms.forEach(f => formIds.add(f.formId));
-        child.categories.forEach(cat => {
-          cat.formRefs.forEach(f => formIds.add(f.formId));
-        });
-      });
-
-      const savedForms = { ...state.savedForms };
-      formIds.forEach(id => delete savedForms[id]);
-
-      const projects = state.projects.filter(p => p.id !== projectId);
-      const activeFormId = state.activeFormId && formIds.has(state.activeFormId)
-        ? null : state.activeFormId;
-
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms, activeFormId };
-    });
-  },
-
-  createChildProject: (parentId, name) => {
+  createFormNode: (parentId, name, formId) => {
     const id = uuidv4();
-    const child: ChildProject = { id, name, parentId, categories: [], uncategorizedForms: [] };
+    const node: ExplorerNode = {
+      id, kind: 'form', name, parentId,
+      childIds: [], formId, updatedAt: Date.now(),
+    };
+
     set(state => {
-      const projects = state.projects.map(p =>
-        p.id === parentId ? { ...p, children: [...p.children, child] } : p
-      );
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
+      const nodes = { ...state.nodes, [id]: node };
+      let rootIds = state.rootIds;
+
+      if (parentId && nodes[parentId]) {
+        nodes[parentId] = { ...nodes[parentId], childIds: [...nodes[parentId].childIds, id] };
+      } else if (!parentId) {
+        rootIds = [...rootIds, id];
+      }
+
+      debouncedSave({ ...state, nodes, rootIds } as ProjectState);
+      return { nodes, rootIds };
     });
     return id;
   },
 
-  renameChildProject: (parentId, childId, name) => {
+  renameNode: (nodeId, name) => {
     set(state => {
-      const projects = state.projects.map(p =>
-        p.id === parentId
-          ? { ...p, children: p.children.map(c => c.id === childId ? { ...c, name } : c) }
-          : p
-      );
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
+      const node = state.nodes[nodeId];
+      if (!node) return state;
+
+      const nodes = { ...state.nodes, [nodeId]: { ...node, name } };
+
+      // If it's a form, also update the savedForm's formName
+      if (node.kind === 'form' && node.formId) {
+        const existing = state.savedForms[node.formId];
+        if (existing) {
+          const savedForms = { ...state.savedForms, [node.formId]: { ...existing, formName: name } };
+          debouncedSave({ ...state, nodes, savedForms } as ProjectState);
+          return { nodes, savedForms };
+        }
+      }
+
+      debouncedSave({ ...state, nodes } as ProjectState);
+      return { nodes };
     });
   },
 
-  deleteChildProject: (parentId, childId) => {
+  deleteNode: (nodeId) => {
     set(state => {
-      const project = state.projects.find(p => p.id === parentId);
-      const child = project?.children.find(c => c.id === childId);
-      if (!child) return state;
+      const node = state.nodes[nodeId];
+      if (!node) return state;
 
-      const formIds = new Set<string>();
-      child.uncategorizedForms.forEach(f => formIds.add(f.formId));
-      child.categories.forEach(cat => cat.formRefs.forEach(f => formIds.add(f.formId)));
-
+      // Collect all nodes in subtree
+      const subtreeIds = collectSubtree(state.nodes, nodeId);
+      const nodes = { ...state.nodes };
       const savedForms = { ...state.savedForms };
-      formIds.forEach(id => delete savedForms[id]);
+      let activeFormId = state.activeFormId;
 
-      const projects = state.projects.map(p =>
-        p.id === parentId
-          ? { ...p, children: p.children.filter(c => c.id !== childId) }
-          : p
-      );
+      // Delete associated savedForms and nodes
+      for (const id of subtreeIds) {
+        const n = nodes[id];
+        if (n?.kind === 'form' && n.formId) {
+          delete savedForms[n.formId];
+          if (activeFormId === n.formId) activeFormId = null;
+        }
+        delete nodes[id];
+      }
 
-      const activeFormId = state.activeFormId && formIds.has(state.activeFormId)
-        ? null : state.activeFormId;
+      // Remove from parent's childIds
+      let rootIds = state.rootIds;
+      if (node.parentId && nodes[node.parentId]) {
+        nodes[node.parentId] = {
+          ...nodes[node.parentId],
+          childIds: nodes[node.parentId].childIds.filter(id => id !== nodeId),
+        };
+      } else {
+        rootIds = rootIds.filter(id => id !== nodeId);
+      }
 
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms, activeFormId };
+      debouncedSave({ ...state, nodes, rootIds, savedForms } as ProjectState);
+      return { nodes, rootIds, savedForms, activeFormId };
     });
   },
 
-  createCategory: (projectId, childId, name) => {
-    const id = uuidv4();
-    const category: Category = { id, name, formRefs: [] };
+  moveNode: (dragItem, dropTarget) => {
     set(state => {
-      const projects = state.projects.map(p =>
-        p.id === projectId
-          ? {
-            ...p,
-            children: p.children.map(c =>
-              c.id === childId
-                ? { ...c, categories: [...c.categories, category] }
-                : c
-            ),
-          }
-          : p
-      );
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
-    });
-    return id;
-  },
+      const dragNode = state.nodes[dragItem.nodeId];
+      const targetNode = state.nodes[dropTarget.nodeId];
+      if (!dragNode || !targetNode) return state;
 
-  renameCategory: (projectId, childId, categoryId, name) => {
-    set(state => {
-      const projects = state.projects.map(p =>
-        p.id === projectId
-          ? {
-            ...p,
-            children: p.children.map(c =>
-              c.id === childId
-                ? {
-                  ...c,
-                  categories: c.categories.map(cat =>
-                    cat.id === categoryId ? { ...cat, name } : cat
-                  ),
-                }
-                : c
-            ),
-          }
-          : p
-      );
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
-    });
-  },
+      // Can only drop into folders
+      if (targetNode.kind !== 'folder') return state;
 
-  deleteCategory: (projectId, childId, categoryId) => {
-    set(state => {
-      const project = state.projects.find(p => p.id === projectId);
-      const child = project?.children.find(c => c.id === childId);
-      const category = child?.categories.find(cat => cat.id === categoryId);
-      if (!category) return state;
+      // Cycle prevention: can't move a folder into its own subtree
+      if (dragItem.nodeId === dropTarget.nodeId) return state;
+      if (dragNode.kind === 'folder' && isAncestor(state.nodes, dragItem.nodeId, dropTarget.nodeId)) return state;
 
-      const formIds = new Set<string>();
-      category.formRefs.forEach(f => formIds.add(f.formId));
+      // Already in the target? No-op
+      if (dragNode.parentId === dropTarget.nodeId) return state;
 
-      const savedForms = { ...state.savedForms };
-      formIds.forEach(id => delete savedForms[id]);
+      const nodes = { ...state.nodes };
+      let rootIds = [...state.rootIds];
 
-      const projects = state.projects.map(p =>
-        p.id === projectId
-          ? {
-            ...p,
-            children: p.children.map(c =>
-              c.id === childId
-                ? { ...c, categories: c.categories.filter(cat => cat.id !== categoryId) }
-                : c
-            ),
-          }
-          : p
-      );
+      // Remove from old parent
+      if (dragNode.parentId && nodes[dragNode.parentId]) {
+        nodes[dragNode.parentId] = {
+          ...nodes[dragNode.parentId],
+          childIds: nodes[dragNode.parentId].childIds.filter(id => id !== dragItem.nodeId),
+        };
+      } else {
+        rootIds = rootIds.filter(id => id !== dragItem.nodeId);
+      }
 
-      const activeFormId = state.activeFormId && formIds.has(state.activeFormId)
-        ? null : state.activeFormId;
+      // Add to new parent
+      nodes[dropTarget.nodeId] = {
+        ...nodes[dropTarget.nodeId],
+        childIds: [...nodes[dropTarget.nodeId].childIds, dragItem.nodeId],
+      };
 
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms, activeFormId };
+      // Update the moved node's parentId
+      nodes[dragItem.nodeId] = { ...nodes[dragItem.nodeId], parentId: dropTarget.nodeId };
+
+      debouncedSave({ ...state, nodes, rootIds } as ProjectState);
+      return { nodes, rootIds };
     });
   },
 
-  saveForm: (projectId, formName, formTitle, formDescription, fields, switchOperators, childId, categoryId, rawSchema) => {
+  // ── Form management ───────────────────────────────────────────────
+
+  saveForm: (parentId, formName, formTitle, formDescription, fields, switchOperators, rawSchema) => {
     const formId = uuidv4();
     const now = Date.now();
 
@@ -335,39 +416,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       updatedAt: now,
     };
 
-    const formRef: FormReference = { id: uuidv4(), formId, name: formName, updatedAt: now };
-
     set(state => {
       const savedForms = { ...state.savedForms, [formId]: savedForm };
 
-      const projects = state.projects.map(p => {
-        if (p.id !== projectId) return p;
+      // Create a form node in the tree
+      const nodeId = uuidv4();
+      const formNode: ExplorerNode = {
+        id: nodeId, kind: 'form', name: formName,
+        parentId, childIds: [], formId, updatedAt: now,
+      };
 
-        if (childId) {
-          return {
-            ...p,
-            children: p.children.map(c => {
-              if (c.id !== childId) return c;
-              if (categoryId) {
-                return {
-                  ...c,
-                  categories: c.categories.map(cat =>
-                    cat.id === categoryId
-                      ? { ...cat, formRefs: [...cat.formRefs, formRef] }
-                      : cat
-                  ),
-                };
-              }
-              return { ...c, uncategorizedForms: [...c.uncategorizedForms, formRef] };
-            }),
-          };
-        }
+      const nodes = { ...state.nodes, [nodeId]: formNode };
+      let rootIds = state.rootIds;
 
-        return { ...p, uncategorizedForms: [...p.uncategorizedForms, formRef] };
-      });
+      if (parentId && nodes[parentId]) {
+        nodes[parentId] = { ...nodes[parentId], childIds: [...nodes[parentId].childIds, nodeId] };
+      } else if (!parentId) {
+        rootIds = [...rootIds, nodeId];
+      }
 
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms, activeFormId: formId };
+      debouncedSave({ ...state, nodes, rootIds, savedForms } as ProjectState);
+      return { nodes, rootIds, savedForms, activeFormId: formId };
     });
 
     return formId;
@@ -391,11 +460,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       };
 
-      // Update form ref names
-      const projects = state.projects.map(p => updateFormRefName(p, formId, formName));
+      // Update form node name in tree
+      const nodes = { ...state.nodes };
+      for (const key of Object.keys(nodes)) {
+        if (nodes[key].kind === 'form' && nodes[key].formId === formId) {
+          nodes[key] = { ...nodes[key], name: formName, updatedAt: now };
+          break;
+        }
+      }
 
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms };
+      debouncedSave({ ...state, nodes, savedForms } as ProjectState);
+      return { nodes, savedForms };
     });
   },
 
@@ -404,11 +479,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const savedForms = { ...state.savedForms };
       delete savedForms[formId];
 
-      const projects = state.projects.map(p => removeFormRefFromProject(p, formId));
-      const activeFormId = state.activeFormId === formId ? null : state.activeFormId;
+      // Find and remove the form node
+      const nodes = { ...state.nodes };
+      let rootIds = [...state.rootIds];
+      let activeFormId = state.activeFormId === formId ? null : state.activeFormId;
 
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms, activeFormId };
+      for (const key of Object.keys(nodes)) {
+        const n = nodes[key];
+        if (n.kind === 'form' && n.formId === formId) {
+          // Remove from parent
+          if (n.parentId && nodes[n.parentId]) {
+            nodes[n.parentId] = {
+              ...nodes[n.parentId],
+              childIds: nodes[n.parentId].childIds.filter(id => id !== key),
+            };
+          } else {
+            rootIds = rootIds.filter(id => id !== key);
+          }
+          delete nodes[key];
+          break;
+        }
+      }
+
+      debouncedSave({ ...state, nodes, rootIds, savedForms } as ProjectState);
+      return { nodes, rootIds, savedForms, activeFormId };
     });
   },
 
@@ -417,46 +511,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const original = state.savedForms[formId];
     if (!original) return null;
 
-    // Find where the original lives
-    let targetProjectId: string | null = null;
-    let targetChildId: string | undefined;
-    let targetCategoryId: string | undefined;
-
-    for (const project of state.projects) {
-      if (project.uncategorizedForms.some(f => f.formId === formId)) {
-        targetProjectId = project.id;
-        break;
-      }
-      for (const child of project.children) {
-        if (child.uncategorizedForms.some(f => f.formId === formId)) {
-          targetProjectId = project.id;
-          targetChildId = child.id;
-          break;
-        }
-        for (const cat of child.categories) {
-          if (cat.formRefs.some(f => f.formId === formId)) {
-            targetProjectId = project.id;
-            targetChildId = child.id;
-            targetCategoryId = cat.id;
-            break;
-          }
-        }
-        if (targetProjectId) break;
-      }
-      if (targetProjectId) break;
-    }
-
-    if (!targetProjectId) return null;
+    // Find the form node to get its parentId
+    const formNode = state.findFormNode(formId);
+    const parentId = formNode?.parentId ?? null;
 
     return get().saveForm(
-      targetProjectId,
+      parentId,
       original.formName + '_copy',
       original.formTitle + ' (Copy)',
       original.formDescription,
       original.fields,
       original.switchOperators,
-      targetChildId,
-      targetCategoryId,
+      original.rawSchema,
     );
   },
 
@@ -470,60 +536,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setActiveFormId: (formId) => set({ activeFormId: formId }),
 
-  renameForm: (formId, newName) => {
-    set(state => {
-      const existing = state.savedForms[formId];
-      if (!existing) return state;
+  // ── Helpers ───────────────────────────────────────────────────────
 
-      const savedForms = {
-        ...state.savedForms,
-        [formId]: { ...existing, formName: newName },
-      };
-      const projects = state.projects.map(p => updateFormRefName(p, formId, newName));
-
-      debouncedSave({ ...state, projects, savedForms } as ProjectState);
-      return { projects, savedForms };
-    });
+  getAncestorPath: (nodeId) => {
+    const { nodes } = get();
+    const path: string[] = [];
+    let current = nodes[nodeId];
+    while (current) {
+      path.unshift(current.name);
+      if (!current.parentId) break;
+      current = nodes[current.parentId];
+    }
+    return path;
   },
 
-  moveForm: (dragItem, dropTarget) => {
-    set(state => {
-      const formRef = dragItem.formRef;
-
-      // Remove from source
-      let projects = state.projects.map(p => removeFormRefFromProject(p, formRef.formId));
-
-      // Add to target
-      projects = projects.map(p => {
-        if (p.id !== dropTarget.projectId) return p;
-
-        if (dropTarget.childId) {
-          return {
-            ...p,
-            children: p.children.map(c => {
-              if (c.id !== dropTarget.childId) return c;
-              if (dropTarget.categoryId) {
-                return {
-                  ...c,
-                  categories: c.categories.map(cat =>
-                    cat.id === dropTarget.categoryId
-                      ? { ...cat, formRefs: [...cat.formRefs, formRef] }
-                      : cat
-                  ),
-                };
-              }
-              return { ...c, uncategorizedForms: [...c.uncategorizedForms, formRef] };
-            }),
-          };
-        }
-
-        return { ...p, uncategorizedForms: [...p.uncategorizedForms, formRef] };
-      });
-
-      debouncedSave({ ...state, projects } as ProjectState);
-      return { projects };
-    });
+  findFormNode: (formId) => {
+    const { nodes } = get();
+    for (const key of Object.keys(nodes)) {
+      if (nodes[key].kind === 'form' && nodes[key].formId === formId) {
+        return nodes[key];
+      }
+    }
+    return null;
   },
+
+  // ── UI state ──────────────────────────────────────────────────────
 
   toggleNode: (nodeId) => {
     set(state => {

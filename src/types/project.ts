@@ -1,14 +1,20 @@
 import type { FieldConfig, ConditionalOperatorConfig } from './schema';
 
-// Lightweight pointer stored in the tree
-export interface FormReference {
+// ── Recursive explorer model ──────────────────────────────────────────
+
+export type NodeKind = 'folder' | 'form';
+
+export interface ExplorerNode {
   id: string;
-  formId: string;
+  kind: NodeKind;
   name: string;
+  parentId: string | null;   // null = root level
+  childIds: string[];         // ordered children (folders + forms interleaved)
+  formId: string | null;      // points into savedForms when kind === 'form'
   updatedAt: number;
 }
 
-// Full form data stored in a flat record
+// Full form data stored in a flat record (unchanged from before)
 export interface SavedForm {
   id: string;
   formName: string;
@@ -20,57 +26,24 @@ export interface SavedForm {
   updatedAt: number;
 }
 
-export interface Category {
-  id: string;
-  name: string;
-  formRefs: FormReference[];
-}
-
-export interface ChildProject {
-  id: string;
-  name: string;
-  parentId: string;
-  categories: Category[];
-  uncategorizedForms: FormReference[];
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  children: ChildProject[];
-  uncategorizedForms: FormReference[];
-}
-
-// Drag and drop types
-export type DragItemType = 'form';
+// ── Drag and drop ─────────────────────────────────────────────────────
 
 export interface DragItem {
-  type: DragItemType;
-  formRef: FormReference;
-  sourceProjectId: string;
-  sourceChildId?: string;
-  sourceCategoryId?: string;
+  nodeId: string;
+  kind: NodeKind;
+  name: string;
 }
-
-export type DropTargetType = 'project' | 'child' | 'category';
 
 export interface DropTarget {
-  type: DropTargetType;
-  projectId: string;
-  childId?: string;
-  categoryId?: string;
+  nodeId: string;
 }
 
-// Tree node types for rendering
-export type TreeNodeType = 'project' | 'child' | 'category' | 'form';
+// ── Tree rendering ────────────────────────────────────────────────────
 
 export interface TreeNodeData {
-  type: TreeNodeType;
   id: string;
+  kind: NodeKind;
   name: string;
-  projectId: string;
-  childId?: string;
-  categoryId?: string;
-  formRef?: FormReference;
+  formId: string | null;
   depth: number;
 }

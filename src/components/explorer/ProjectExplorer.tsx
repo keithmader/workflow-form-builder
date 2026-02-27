@@ -1,23 +1,22 @@
 import { useState, useCallback } from 'react';
 import { DndContext, DragOverlay, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
-import { Plus, FileText } from 'lucide-react';
+import { Plus, FileText, Folder } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { useFormBuilderStore } from '@/stores/formBuilderStore';
 import { TreeNode } from './TreeNode';
 import { ExplorerContextMenu } from './ExplorerContextMenu';
 import { PromptDialog, ConfirmDialog, UnsavedChangesDialog } from './ExplorerDialogs';
-import type { TreeNodeData, DragItem, DropTarget } from '@/types/project';
+import type { TreeNodeData, DragItem } from '@/types/project';
 
 type DialogState =
   | { type: 'none' }
-  | { type: 'createProject' }
-  | { type: 'createFolder'; projectId: string }
-  | { type: 'createCategory'; projectId: string; childId: string }
+  | { type: 'createFolder'; parentId: string | null }
+  | { type: 'createForm'; parentId: string }
   | { type: 'rename'; node: TreeNodeData }
   | { type: 'delete'; node: TreeNodeData }
   | { type: 'unsavedSwitch'; pendingFormId: string }
-  | { type: 'unsavedNewForm'; projectId: string; childId?: string; categoryId?: string };
+  | { type: 'unsavedNewForm'; parentId: string };
 
 interface ContextMenuState {
   x: number;
@@ -27,12 +26,10 @@ interface ContextMenuState {
 
 export function ProjectExplorer() {
   const {
-    projects, activeFormId, expandedNodes,
-    createProject, createChildProject, createCategory,
-    renameProject, renameChildProject, renameCategory, renameForm,
-    deleteProject, deleteChildProject, deleteCategory, deleteForm,
+    nodes, rootIds, activeFormId, expandedNodes,
+    createFolder, createFormNode, renameNode, deleteNode,
     duplicateForm, saveForm, updateSavedForm, openForm, expandNode,
-    moveForm,
+    moveNode,
   } = useProjectStore();
 
   const { isDirty, loadForm, getFormSnapshot } = useFormBuilderStore();
@@ -41,71 +38,34 @@ export function ProjectExplorer() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [activeDrag, setActiveDrag] = useState<DragItem | null>(null);
 
-  // Build tree nodes
+  // Build tree nodes recursively
   const buildTreeNodes = useCallback((): TreeNodeData[] => {
-    const nodes: TreeNodeData[] = [];
+    const result: TreeNodeData[] = [];
 
-    for (const project of projects) {
-      const projectNode: TreeNodeData = {
-        type: 'project', id: project.id, name: project.name,
-        projectId: project.id, depth: 0,
-      };
-      nodes.push(projectNode);
+    const walk = (ids: string[], depth: number) => {
+      for (const id of ids) {
+        const node = nodes[id];
+        if (!node) continue;
 
-      if (!expandedNodes.has(project.id)) continue;
-
-      // Child projects (folders)
-      for (const child of project.children) {
-        nodes.push({
-          type: 'child', id: child.id, name: child.name,
-          projectId: project.id, childId: child.id, depth: 1,
+        result.push({
+          id: node.id,
+          kind: node.kind,
+          name: node.name,
+          formId: node.formId,
+          depth,
         });
 
-        if (!expandedNodes.has(child.id)) continue;
-
-        // Categories
-        for (const cat of child.categories) {
-          nodes.push({
-            type: 'category', id: cat.id, name: cat.name,
-            projectId: project.id, childId: child.id, categoryId: cat.id, depth: 2,
-          });
-
-          if (!expandedNodes.has(cat.id)) continue;
-
-          // Forms in category
-          for (const formRef of cat.formRefs) {
-            nodes.push({
-              type: 'form', id: formRef.id, name: formRef.name,
-              projectId: project.id, childId: child.id, categoryId: cat.id,
-              formRef, depth: 3,
-            });
-          }
-        }
-
-        // Uncategorized forms in child
-        for (const formRef of child.uncategorizedForms) {
-          nodes.push({
-            type: 'form', id: formRef.id, name: formRef.name,
-            projectId: project.id, childId: child.id,
-            formRef, depth: 2,
-          });
+        if (node.kind === 'folder' && expandedNodes.has(node.id)) {
+          walk(node.childIds, depth + 1);
         }
       }
+    };
 
-      // Uncategorized forms at project level
-      for (const formRef of project.uncategorizedForms) {
-        nodes.push({
-          type: 'form', id: formRef.id, name: formRef.name,
-          projectId: project.id,
-          formRef, depth: 1,
-        });
-      }
-    }
+    walk(rootIds, 0);
+    return result;
+  }, [nodes, rootIds, expandedNodes]);
 
-    return nodes;
-  }, [projects, expandedNodes]);
-
-  // Save current form (existing or new into first project)
+  // Save current form
   const saveCurrent = useCallback(() => {
     const snapshot = getFormSnapshot();
     if (activeFormId) {
@@ -116,35 +76,35 @@ export function ProjectExplorer() {
         snapshot.rawSchema,
       );
     } else {
-      // No active form — save into first project or create one
-      let projectId = projects[0]?.id;
-      if (!projectId) {
-        projectId = useProjectStore.getState().createProject('My Project');
+      // No active form — save into first root folder or create one
+      let parentId: string | null = null;
+      for (const id of rootIds) {
+        if (nodes[id]?.kind === 'folder') { parentId = id; break; }
+      }
+      if (!parentId) {
+        parentId = useProjectStore.getState().createFolder(null, 'My Project');
       }
       saveForm(
-        projectId,
+        parentId,
         snapshot.formName || 'NewForm',
         snapshot.formTitle || 'New Form',
         snapshot.formDescription || '',
         snapshot.fields,
         snapshot.switchOperators,
-        undefined,
-        undefined,
         snapshot.rawSchema,
       );
     }
     useFormBuilderStore.setState({ isDirty: false });
-  }, [activeFormId, getFormSnapshot, updateSavedForm, projects, saveForm]);
+  }, [activeFormId, getFormSnapshot, updateSavedForm, rootIds, nodes, saveForm]);
 
   const handleOpenForm = useCallback((formId: string) => {
     if (isDirty) {
       setDialog({ type: 'unsavedSwitch', pendingFormId: formId });
       return;
     }
-
     const form = openForm(formId);
     if (form) loadForm(form);
-  }, [activeFormId, isDirty, openForm, loadForm]);
+  }, [isDirty, openForm, loadForm]);
 
   const handleSaveAndSwitch = useCallback((pendingFormId: string) => {
     saveCurrent();
@@ -153,43 +113,39 @@ export function ProjectExplorer() {
     setDialog({ type: 'none' });
   }, [saveCurrent, openForm, loadForm]);
 
-  const handleNewForm = useCallback((projectId: string, childId?: string, categoryId?: string) => {
+  const handleNewForm = useCallback((parentId: string) => {
     if (isDirty) {
-      setDialog({ type: 'unsavedNewForm', projectId, childId, categoryId });
+      setDialog({ type: 'unsavedNewForm', parentId });
       return;
     }
-    doCreateNewForm(projectId, childId, categoryId);
+    doCreateNewForm(parentId);
   }, [isDirty]);
 
-  const doCreateNewForm = useCallback((projectId: string, childId?: string, categoryId?: string) => {
-    // Reset to a blank form first
+  const doCreateNewForm = useCallback((parentId: string) => {
     useFormBuilderStore.getState().newForm();
 
     const snapshot = useFormBuilderStore.getState().getFormSnapshot();
     const formId = saveForm(
-      projectId,
+      parentId,
       snapshot.formName,
       snapshot.formTitle,
       snapshot.formDescription,
       snapshot.fields,
       snapshot.switchOperators,
-      childId,
-      categoryId,
     );
 
-    // Expand parent nodes
-    expandNode(projectId);
-    if (childId) expandNode(childId);
-    if (categoryId) expandNode(categoryId);
+    // Expand parent chain
+    expandNode(parentId);
+    const parentNode = nodes[parentId];
+    if (parentNode?.parentId) expandNode(parentNode.parentId);
 
-    // Load the new form
     const form = openForm(formId);
     if (form) loadForm(form);
-  }, [saveForm, expandNode, openForm, loadForm]);
+  }, [saveForm, expandNode, openForm, loadForm, nodes]);
 
-  const handleSaveAndNewForm = useCallback((projectId: string, childId?: string, categoryId?: string) => {
+  const handleSaveAndNewForm = useCallback((parentId: string) => {
     saveCurrent();
-    doCreateNewForm(projectId, childId, categoryId);
+    doCreateNewForm(parentId);
     setDialog({ type: 'none' });
   }, [saveCurrent, doCreateNewForm]);
 
@@ -204,42 +160,14 @@ export function ProjectExplorer() {
   }, []);
 
   const handleDeleteNode = useCallback((node: TreeNodeData) => {
-    switch (node.type) {
-      case 'project':
-        deleteProject(node.projectId);
-        break;
-      case 'child':
-        if (node.childId) deleteChildProject(node.projectId, node.childId);
-        break;
-      case 'category':
-        if (node.childId && node.categoryId)
-          deleteCategory(node.projectId, node.childId, node.categoryId);
-        break;
-      case 'form':
-        if (node.formRef) deleteForm(node.formRef.formId);
-        break;
-    }
+    deleteNode(node.id);
     setDialog({ type: 'none' });
-  }, [deleteProject, deleteChildProject, deleteCategory, deleteForm]);
+  }, [deleteNode]);
 
   const handleRenameConfirm = useCallback((node: TreeNodeData, newName: string) => {
-    switch (node.type) {
-      case 'project':
-        renameProject(node.projectId, newName);
-        break;
-      case 'child':
-        if (node.childId) renameChildProject(node.projectId, node.childId, newName);
-        break;
-      case 'category':
-        if (node.childId && node.categoryId)
-          renameCategory(node.projectId, node.childId, node.categoryId, newName);
-        break;
-      case 'form':
-        if (node.formRef) renameForm(node.formRef.formId, newName);
-        break;
-    }
+    renameNode(node.id, newName);
     setDialog({ type: 'none' });
-  }, [renameProject, renameChildProject, renameCategory, renameForm]);
+  }, [renameNode]);
 
   // DnD handlers
   const handleDragStart = (event: DragStartEvent) => {
@@ -253,10 +181,10 @@ export function ProjectExplorer() {
     if (!over) return;
 
     const dragData = active.data.current as DragItem | undefined;
-    const dropData = over.data.current as DropTarget | undefined;
+    const dropData = over.data.current as { nodeId: string } | undefined;
     if (!dragData || !dropData) return;
 
-    moveForm(dragData, dropData);
+    moveNode(dragData, dropData);
   };
 
   const treeNodes = buildTreeNodes();
@@ -268,7 +196,7 @@ export function ProjectExplorer() {
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Projects</span>
         <button
           className="p-0.5 rounded hover:bg-accent transition-colors"
-          onClick={() => setDialog({ type: 'createProject' })}
+          onClick={() => setDialog({ type: 'createFolder', parentId: null })}
           title="New Project"
         >
           <Plus size={14} />
@@ -289,7 +217,7 @@ export function ProjectExplorer() {
                   <TreeNode
                     key={node.id}
                     node={node}
-                    isActive={node.type === 'form' && node.formRef?.formId === activeFormId}
+                    isActive={node.kind === 'form' && node.formId === activeFormId}
                     onContextMenu={handleContextMenu}
                     onOpen={handleOpenForm}
                     onMenuClick={handleMenuClick}
@@ -301,8 +229,8 @@ export function ProjectExplorer() {
             <DragOverlay>
               {activeDrag && (
                 <div className="flex items-center gap-1 px-2 py-1 bg-popover border border-border rounded shadow-md text-sm">
-                  <FileText size={14} />
-                  <span>{activeDrag.formRef.name}</span>
+                  {activeDrag.kind === 'folder' ? <Folder size={14} /> : <FileText size={14} />}
+                  <span>{activeDrag.name}</span>
                 </div>
               )}
             </DragOverlay>
@@ -323,8 +251,7 @@ export function ProjectExplorer() {
           y={contextMenu.y}
           node={contextMenu.node}
           onClose={() => setContextMenu(null)}
-          onNewFolder={(projectId) => setDialog({ type: 'createFolder', projectId })}
-          onNewCategory={(projectId, childId) => setDialog({ type: 'createCategory', projectId, childId })}
+          onNewFolder={(parentId) => setDialog({ type: 'createFolder', parentId })}
           onNewForm={handleNewForm}
           onRename={(node) => setDialog({ type: 'rename', node })}
           onDelete={(node) => setDialog({ type: 'delete', node })}
@@ -335,36 +262,13 @@ export function ProjectExplorer() {
 
       {/* Dialogs */}
       <PromptDialog
-        open={dialog.type === 'createProject'}
-        title="New Project"
-        placeholder="Project name"
-        onConfirm={(name) => { createProject(name); setDialog({ type: 'none' }); }}
-        onCancel={() => setDialog({ type: 'none' })}
-      />
-
-      <PromptDialog
         open={dialog.type === 'createFolder'}
-        title="New Folder"
-        placeholder="Folder name (e.g. QA, UAT)"
+        title={dialog.type === 'createFolder' && dialog.parentId === null ? 'New Project' : 'New Subfolder'}
+        placeholder={dialog.type === 'createFolder' && dialog.parentId === null ? 'Project name' : 'Folder name'}
         onConfirm={(name) => {
           if (dialog.type === 'createFolder') {
-            const id = createChildProject(dialog.projectId, name);
-            expandNode(dialog.projectId);
-            expandNode(id);
-          }
-          setDialog({ type: 'none' });
-        }}
-        onCancel={() => setDialog({ type: 'none' })}
-      />
-
-      <PromptDialog
-        open={dialog.type === 'createCategory'}
-        title="New Category"
-        placeholder="Category name"
-        onConfirm={(name) => {
-          if (dialog.type === 'createCategory') {
-            const id = createCategory(dialog.projectId, dialog.childId, name);
-            expandNode(dialog.childId);
+            const id = createFolder(dialog.parentId, name);
+            if (dialog.parentId) expandNode(dialog.parentId);
             expandNode(id);
           }
           setDialog({ type: 'none' });
@@ -374,7 +278,7 @@ export function ProjectExplorer() {
 
       <PromptDialog
         open={dialog.type === 'rename'}
-        title={dialog.type === 'rename' ? `Rename ${dialog.node.type}` : ''}
+        title={dialog.type === 'rename' ? `Rename ${dialog.node.kind}` : ''}
         defaultValue={dialog.type === 'rename' ? dialog.node.name : ''}
         onConfirm={(name) => {
           if (dialog.type === 'rename') handleRenameConfirm(dialog.node, name);
@@ -384,7 +288,7 @@ export function ProjectExplorer() {
 
       <ConfirmDialog
         open={dialog.type === 'delete'}
-        title={dialog.type === 'delete' ? `Delete ${dialog.node.type}?` : ''}
+        title={dialog.type === 'delete' ? `Delete ${dialog.node.kind}?` : ''}
         message={dialog.type === 'delete'
           ? `Are you sure you want to delete "${dialog.node.name}"? This cannot be undone.`
           : ''}
@@ -400,7 +304,7 @@ export function ProjectExplorer() {
           if (dialog.type === 'unsavedSwitch') {
             handleSaveAndSwitch(dialog.pendingFormId);
           } else if (dialog.type === 'unsavedNewForm') {
-            handleSaveAndNewForm(dialog.projectId, dialog.childId, dialog.categoryId);
+            handleSaveAndNewForm(dialog.parentId);
           }
         }}
         onCancel={() => setDialog({ type: 'none' })}
