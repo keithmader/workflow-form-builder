@@ -4,6 +4,10 @@
 
 A browser-based form builder and tester for the **WorkflowEngine** Android app. WorkflowEngine organizes trucking/logistics work as **Jobs → Steps → Tasks**, where each Task has a `type` that maps to a JSON schema form definition. This tool lets you visually build those form definitions and test them against real job data — all locally, no backend.
 
+## WorkflowEngine Context
+
+For requests about workflows, jobs, tasks, form schemas, conditional operators, reference resolution, or the Job Tester feature, consult `docs/WorkflowEngine-reference.md` and the Kotlin source in `WorkflowEngine/`. The reference doc covers the full data model, all 27+ widget types, switch/toggle operators, reference syntax (`$job.*`, `$step.*`, `$task.*`, `$step_location.*`, `$this.*`), schema keywords, and the submission flow. The Job Tester simulates this engine's form rendering pipeline in the browser.
+
 ## Tech Stack
 
 React 19 + TypeScript, Vite, Zustand (state), Radix UI (primitives), TailwindCSS 4, Lucide icons, Monaco editor, dnd-kit (drag-and-drop), uuid.
