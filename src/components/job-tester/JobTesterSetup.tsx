@@ -1,5 +1,5 @@
-import { useCallback, useRef } from 'react';
-import { Upload, AlertTriangle, Play, RotateCcw, CheckCircle2, FileText, Package } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
+import { Upload, AlertTriangle, Play, RotateCcw, CheckCircle2, FileText, Package, ClipboardPaste } from 'lucide-react';
 import { useJobTesterStore } from '@/stores/jobTesterStore';
 import { useProjectStore } from '@/stores/projectStore';
 
@@ -21,23 +21,70 @@ export function JobTesterSetup() {
   const jobInputRef = useRef<HTMLInputElement>(null);
   const schemasInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileLoad = useCallback(
-    (handler: (json: string) => { success: boolean; error?: string }) =>
-      (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = handler(reader.result as string);
-          if (!result.success) {
-            alert(result.error ?? 'Failed to parse file');
-          }
-        };
-        reader.readAsText(file);
-        e.target.value = '';
-      },
-    [],
+  const [jobInputMode, setJobInputMode] = useState<'paste' | 'file'>('paste');
+  const [schemasInputMode, setSchemasInputMode] = useState<'paste' | 'file'>('paste');
+  const [jobPasteText, setJobPasteText] = useState('');
+  const [schemasPasteText, setSchemasPasteText] = useState('');
+  const [jobPasteError, setJobPasteError] = useState<string | null>(null);
+  const [schemasPasteError, setSchemasPasteError] = useState<string | null>(null);
+
+  const handleJobFileLoad = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = loadJobJson(reader.result as string);
+        setJobPasteError(result.success ? null : (result.error ?? 'Failed to parse file'));
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    },
+    [loadJobJson],
   );
+
+  const handleSchemasFileLoad = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = loadSchemasJson(reader.result as string);
+        setSchemasPasteError(result.success ? null : (result.error ?? 'Failed to parse file'));
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    },
+    [loadSchemasJson],
+  );
+
+  const handleJobPasteLoad = useCallback(() => {
+    if (!jobPasteText.trim()) {
+      setJobPasteError('Paste some JSON first');
+      return;
+    }
+    const result = loadJobJson(jobPasteText);
+    if (result.success) {
+      setJobPasteError(null);
+      setJobPasteText('');
+    } else {
+      setJobPasteError(result.error ?? 'Failed to parse JSON');
+    }
+  }, [jobPasteText, loadJobJson]);
+
+  const handleSchemasPasteLoad = useCallback(() => {
+    if (!schemasPasteText.trim()) {
+      setSchemasPasteError('Paste some JSON first');
+      return;
+    }
+    const result = loadSchemasJson(schemasPasteText);
+    if (result.success) {
+      setSchemasPasteError(null);
+      setSchemasPasteText('');
+    } else {
+      setSchemasPasteError(result.error ?? 'Failed to parse JSON');
+    }
+  }, [schemasPasteText, loadSchemasJson]);
 
   // Count project forms
   const projectFormNames = Object.values(savedForms).map((f) => f.formName);
@@ -119,27 +166,70 @@ export function JobTesterSetup() {
           )}
         </div>
 
-        {/* Job JSON upload */}
+        {/* Job JSON */}
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <FileText size={12} className="text-muted-foreground" />
-            <span className="text-xs font-medium">Job JSON</span>
-            {rawJobJson && <CheckCircle2 size={12} className="text-green-500" />}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText size={12} className="text-muted-foreground" />
+              <span className="text-xs font-medium">Job JSON</span>
+              {rawJobJson && <CheckCircle2 size={12} className="text-green-500" />}
+            </div>
+            <div className="flex rounded-md border border-border overflow-hidden">
+              <button
+                onClick={() => { setJobInputMode('paste'); setJobPasteError(null); }}
+                className={`px-2 py-0.5 text-[10px] flex items-center gap-1 ${jobInputMode === 'paste' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <ClipboardPaste size={10} />
+                Paste
+              </button>
+              <button
+                onClick={() => { setJobInputMode('file'); setJobPasteError(null); }}
+                className={`px-2 py-0.5 text-[10px] flex items-center gap-1 ${jobInputMode === 'file' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <Upload size={10} />
+                Upload
+              </button>
+            </div>
           </div>
-          <input
-            ref={jobInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleFileLoad(loadJobJson)}
-            className="hidden"
-          />
-          <button
-            onClick={() => jobInputRef.current?.click()}
-            className="w-full flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-xs text-muted-foreground hover:border-primary hover:text-foreground transition-colors"
-          >
-            <Upload size={14} />
-            {rawJobJson ? 'Replace Job JSON' : 'Load Job JSON'}
-          </button>
+
+          {jobInputMode === 'paste' ? (
+            <div className="space-y-1.5">
+              <textarea
+                value={jobPasteText}
+                onChange={(e) => { setJobPasteText(e.target.value); setJobPasteError(null); }}
+                placeholder='Paste job JSON here...'
+                className="w-full h-24 px-2 py-1.5 border border-border rounded-md text-xs font-mono bg-background resize-y focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                onClick={handleJobPasteLoad}
+                disabled={!jobPasteText.trim()}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-primary/10 text-primary rounded-md text-xs font-medium disabled:opacity-50 hover:bg-primary/20 transition-colors"
+              >
+                Load
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={jobInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleJobFileLoad}
+                className="hidden"
+              />
+              <button
+                onClick={() => jobInputRef.current?.click()}
+                className="w-full flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-xs text-muted-foreground hover:border-primary hover:text-foreground transition-colors"
+              >
+                <Upload size={14} />
+                {rawJobJson ? 'Replace Job JSON' : 'Load Job JSON'}
+              </button>
+            </>
+          )}
+
+          {jobPasteError && (
+            <p className="text-xs text-red-500 pl-1">{jobPasteError}</p>
+          )}
 
           {parsedJob && (
             <div className="text-xs space-y-0.5 pl-1">
@@ -161,29 +251,73 @@ export function JobTesterSetup() {
           )}
         </div>
 
-        {/* Optional schemas JSON upload */}
+        {/* Optional schemas JSON */}
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Schemas JSON
-            </span>
-            <span className="text-[10px] text-muted-foreground/60">(optional fallback)</span>
-            {rawSchemasJson && <CheckCircle2 size={12} className="text-green-500" />}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Schemas JSON
+              </span>
+              <span className="text-[10px] text-muted-foreground/60">(optional)</span>
+              {rawSchemasJson && <CheckCircle2 size={12} className="text-green-500" />}
+            </div>
+            <div className="flex rounded-md border border-border overflow-hidden">
+              <button
+                onClick={() => { setSchemasInputMode('paste'); setSchemasPasteError(null); }}
+                className={`px-2 py-0.5 text-[10px] flex items-center gap-1 ${schemasInputMode === 'paste' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <ClipboardPaste size={10} />
+                Paste
+              </button>
+              <button
+                onClick={() => { setSchemasInputMode('file'); setSchemasPasteError(null); }}
+                className={`px-2 py-0.5 text-[10px] flex items-center gap-1 ${schemasInputMode === 'file' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <Upload size={10} />
+                Upload
+              </button>
+            </div>
           </div>
-          <input
-            ref={schemasInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleFileLoad(loadSchemasJson)}
-            className="hidden"
-          />
-          <button
-            onClick={() => schemasInputRef.current?.click()}
-            className="w-full flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
-          >
-            <Upload size={14} />
-            {rawSchemasJson ? 'Replace Schemas JSON' : 'Load Schemas JSON'}
-          </button>
+
+          {schemasInputMode === 'paste' ? (
+            <div className="space-y-1.5">
+              <textarea
+                value={schemasPasteText}
+                onChange={(e) => { setSchemasPasteText(e.target.value); setSchemasPasteError(null); }}
+                placeholder='Paste schemas JSON here...'
+                className="w-full h-24 px-2 py-1.5 border border-border rounded-md text-xs font-mono bg-background resize-y focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                onClick={handleSchemasPasteLoad}
+                disabled={!schemasPasteText.trim()}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-primary/10 text-primary rounded-md text-xs font-medium disabled:opacity-50 hover:bg-primary/20 transition-colors"
+              >
+                Load
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={schemasInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleSchemasFileLoad}
+                className="hidden"
+              />
+              <button
+                onClick={() => schemasInputRef.current?.click()}
+                className="w-full flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
+              >
+                <Upload size={14} />
+                {rawSchemasJson ? 'Replace Schemas JSON' : 'Load Schemas JSON'}
+              </button>
+            </>
+          )}
+
+          {schemasPasteError && (
+            <p className="text-xs text-red-500 pl-1">{schemasPasteError}</p>
+          )}
+
           <p className="text-[10px] text-muted-foreground/60 pl-1">
             Used for task types not found in your project forms
           </p>
