@@ -4,8 +4,11 @@ import { useProjectStore } from '@/stores/projectStore';
 import { isBuilderReady } from '@/lib/builderBridge';
 import {
   Plus, Download, Upload, Undo2, Redo2, FileJson, Save, PanelRight,
+  Sun, Moon, Monitor,
 } from 'lucide-react';
 import { useState, useRef } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { useThemeStore, type ThemeId } from '@/stores/themeStore';
 import { UnsavedChangesDialog } from '@/components/explorer/ExplorerDialogs';
 
 interface ToolbarProps {
@@ -137,6 +140,18 @@ export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: To
     e.target.value = '';
   };
 
+  const { theme, setTheme } = useThemeStore();
+
+  const themeItems: { id: ThemeId; label: string; icon: typeof Sun }[] = [
+    { id: 'light', label: 'Light', icon: Sun },
+    { id: 'dark', label: 'Dark', icon: Moon },
+    { id: 'solarized-light', label: 'Solarized Light', icon: Sun },
+    { id: 'solarized-dark', label: 'Solarized Dark', icon: Moon },
+    { id: 'system', label: 'System', icon: Monitor },
+  ];
+
+  const CurrentThemeIcon = theme === 'system' ? Monitor : theme.includes('dark') ? Moon : Sun;
+
   const btnClass = 'flex items-center gap-1 px-3 py-1.5 text-sm rounded-md hover:bg-accent transition-colors disabled:opacity-40';
 
   return (
@@ -187,6 +202,35 @@ export function Toolbar({ onToggleJson, onToggleProps, showJson, showProps }: To
       <button className={btnClass} onClick={redo} disabled={!canRedo} title="Redo">
         <Redo2 size={16} />
       </button>
+
+      <div className="h-5 w-px bg-border" />
+
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button className={btnClass} title="Theme">
+            <CurrentThemeIcon size={16} />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-md"
+            sideOffset={5}
+          >
+            {themeItems.map(({ id, label, icon: Icon }) => (
+              <DropdownMenu.Item
+                key={id}
+                className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer outline-none hover:bg-accent hover:text-accent-foreground ${
+                  theme === id ? 'bg-accent text-accent-foreground' : 'text-popover-foreground'
+                }`}
+                onSelect={() => setTheme(id)}
+              >
+                <Icon size={14} />
+                {label}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
 
       <div className="flex-1" />
 

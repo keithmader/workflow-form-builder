@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { initBuilder } from '@/lib/builderBridge';
 import { useProjectStore } from '@/stores/projectStore';
+import { useThemeStore } from '@/stores/themeStore';
 
 function App() {
   const [builderReady, setBuilderReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Initialize theme from localStorage / system preference
+    const cleanupTheme = useThemeStore.getState().initTheme();
+
     // Load project data from localStorage
     useProjectStore.getState().loadFromStorage();
 
@@ -32,7 +36,10 @@ function App() {
       }
     }, 500);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      cleanupTheme();
+    };
   }, []);
 
   if (error) {

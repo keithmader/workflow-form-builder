@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { Pin, PinOff } from 'lucide-react';
 import { useFormBuilderStore } from '@/stores/formBuilderStore';
+import { useThemeStore } from '@/stores/themeStore';
 // import { isBuilderReady } from '@/lib/builderBridge';
 
 interface JsonEditorProps {
@@ -11,6 +12,8 @@ interface JsonEditorProps {
 
 export function JsonEditor({ pinned, onTogglePin }: JsonEditorProps) {
   const { importSchema, rawSchema, formLoadCounter } = useFormBuilderStore();
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
+  const monacoTheme = resolvedTheme === 'dark' || resolvedTheme === 'solarized-dark' ? 'vs-dark' : 'vs';
   const [localJson, setLocalJson] = useState<string>('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -149,7 +152,7 @@ export function JsonEditor({ pinned, onTogglePin }: JsonEditorProps) {
           defaultLanguage="json"
           value={localJson}
           onChange={handleChange}
-          theme="vs-light"
+          theme={monacoTheme}
           options={{
             minimap: { enabled: false },
             fontSize: 12,
