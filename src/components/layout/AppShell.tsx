@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
-import { Pin, PinOff } from 'lucide-react';
+import { Pin, PinOff, PlayCircle } from 'lucide-react';
 import { Toolbar } from './Toolbar';
 import { ResizeHandle } from './ResizeHandle';
 import { FieldPalette } from '@/components/sidebar/FieldPalette';
@@ -10,6 +10,11 @@ import { JsonEditor } from '@/components/json/JsonEditor';
 import { SwitchEditor } from '@/components/conditionals/SwitchEditor';
 // import { PreviewPanel } from '@/components/preview/PreviewPanel';
 import { ProjectExplorer } from '@/components/explorer/ProjectExplorer';
+import { JobTesterSetup } from '@/components/job-tester/JobTesterSetup';
+import { JobTesterCanvas } from '@/components/job-tester/JobTesterCanvas';
+import { JobTesterProgress } from '@/components/job-tester/JobTesterProgress';
+import { JobTesterResults } from '@/components/job-tester/JobTesterResults';
+import { useJobTesterStore } from '@/stores/jobTesterStore';
 
 type RightPanel = 'properties' | 'conditionals';
 
@@ -28,6 +33,9 @@ export function AppShell() {
   const [leftWidth, setLeftWidth] = useState(256);
   const [jsonWidth, setJsonWidth] = useState(384);
 
+  const testerPhase = useJobTesterStore((s) => s.phase);
+  const testerIsActive = useJobTesterStore((s) => s.isActive);
+
   const handleLeftResize = useCallback((delta: number) => {
     setLeftWidth(w => Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + delta)));
   }, []);
@@ -35,6 +43,14 @@ export function AppShell() {
   const handleJsonResize = useCallback((delta: number) => {
     setJsonWidth(w => Math.min(JSON_MAX, Math.max(JSON_MIN, w + delta)));
   }, []);
+
+  // Determine what the center area shows
+  const showTesterCanvas = testerIsActive && testerPhase === 'stepping';
+  const showTesterResults = testerIsActive && testerPhase === 'results';
+  const showFormBuilder = !showTesterCanvas && !showTesterResults;
+
+  // Hide right panels when tester is active
+  const showRightPanels = showFormBuilder;
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -48,7 +64,7 @@ export function AppShell() {
       />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Explorer + Field Palette (tabbed) */}
+        {/* Left: Explorer + Field Palette + Tester (tabbed) */}
         <Tabs.Root
           defaultValue="explorer"
           className="border-r border-border flex-shrink-0 flex flex-col overflow-hidden"
@@ -67,6 +83,13 @@ export function AppShell() {
             >
               Fields
             </Tabs.Trigger>
+            <Tabs.Trigger
+              value="tester"
+              className="flex-1 px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground hover:text-foreground flex items-center justify-center gap-1"
+            >
+              <PlayCircle size={12} />
+              Tester
+            </Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content value="explorer" className="flex-1 overflow-hidden data-[state=inactive]:hidden">
             <ProjectExplorer />
@@ -74,18 +97,27 @@ export function AppShell() {
           <Tabs.Content value="fields" className="flex-1 overflow-hidden data-[state=inactive]:hidden">
             <FieldPalette />
           </Tabs.Content>
+          <Tabs.Content value="tester" className="flex-1 overflow-hidden data-[state=inactive]:hidden">
+            {testerIsActive && testerPhase === 'stepping' ? (
+              <JobTesterProgress />
+            ) : (
+              <JobTesterSetup />
+            )}
+          </Tabs.Content>
         </Tabs.Root>
 
         {/* Resize handle: left panel */}
         <ResizeHandle side="left" onResize={handleLeftResize} />
 
-        {/* Center: Form Canvas */}
+        {/* Center area */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <FormCanvas />
+          {showTesterCanvas && <JobTesterCanvas />}
+          {showTesterResults && <JobTesterResults />}
+          {showFormBuilder && <FormCanvas />}
         </div>
 
-        {/* Right: Properties / Conditionals */}
-        {showProps && (
+        {/* Right: Properties / Conditionals — hidden during tester */}
+        {showRightPanels && showProps && (
           <div className="w-72 border-l border-border flex-shrink-0 flex flex-col overflow-hidden">
             <div className="flex border-b border-border">
               <button
@@ -125,8 +157,8 @@ export function AppShell() {
           </div>
         )}
 
-        {/* JSON Editor (toggleable) with resize handle */}
-        {showJson && (
+        {/* JSON Editor (toggleable) with resize handle — hidden during tester */}
+        {showRightPanels && showJson && (
           <>
             <ResizeHandle side="right" onResize={handleJsonResize} />
             <div

@@ -98,7 +98,7 @@ function detectFormDefinition(root: Record<string, unknown>): DetectedForm | nul
 // Form definition parsing
 // ---------------------------------------------------------------------------
 
-function parseFormDefinition(formName: string, def: Record<string, unknown>): ParsedSchema {
+export function parseFormDefinition(formName: string, def: Record<string, unknown>): ParsedSchema {
   const formTitle = str(def.title) ?? formName;
   const formDescription = str(def.description) ?? '';
 
